@@ -7,7 +7,7 @@
 
 // the threshold for black line
 #define THRESHOLD 1020
-#define DEBUG 0
+#define DEBUG 1
 
 /* Define motor controll inputs */
 //motor A connected between A01 and A02 - Left Motor
@@ -15,12 +15,12 @@
 #define STBY 10 //standby
 
 //Motor A
-#define PWMA 3 //Speed control
+#define PWMA 5 //Speed control
 #define AIN1 9 //Direction
 #define AIN2 8 //Direction
 
 //Motor B
-#define PWMB 5 //Speed control
+#define PWMB 6 //Speed control
 #define BIN1 11 //Direction
 #define BIN2 12 //Direction
 
@@ -46,7 +46,7 @@ int errorLast = 0;
 
 /* Set up maximum speed and speed for turning (to be used with PWM) */
 // PWM to control motor speed [0 - 255]
-int maxSpeed = 255;
+int maxSpeed = 90;
 
 /* variables to keep track of current speed of motors */
 int motorLSpeed = 90;
@@ -63,7 +63,7 @@ void setup() {
   pinMode(BIN1,OUTPUT);        
   pinMode(BIN2,OUTPUT);
   pinMode(PWMB,OUTPUT);
-
+  
   Serial.begin(115200);
 }
 
@@ -158,29 +158,29 @@ void ErrorCorrection() {
       break;
 
     /* 3 Sensors on the line */    
-    case B11100: // turn left
-      error = maxSpeed;
-      break;
-      
-    case B01110:
-      if (errorLast > 0 && errorLast <= 255) {
-        error = maxSpeed;
-      } else {
-        error = -maxSpeed;
-      }
-      break;
-    
-    case B00111:  // turn right
-      error = -maxSpeed;
-      break;
-
-    /* 4 Sensors on the line */       
-    case B11110:
-      error = maxSpeed;
-      break;
-      
-    case B01111:
-      error = -maxSpeed;
+//    case B11100: // turn left
+//      error = maxSpeed;
+//      break;
+//      
+//    case B01110:
+//      if (errorLast > 0 && errorLast <= 255) {
+//        error = maxSpeed;
+//      } else {
+//        error = -maxSpeed;
+//      }
+//      break;
+//    
+//    case B00111:  // turn right
+//      error = -maxSpeed;
+//      break;
+//
+//    /* 4 Sensors on the line */       
+//    case B11110:
+//      error = maxSpeed;
+//      break;
+//      
+//    case B01111:
+//      error = -maxSpeed;
       break;
       
    /* 5 Sensors on the line */

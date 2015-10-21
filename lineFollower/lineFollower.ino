@@ -6,7 +6,7 @@
 #include <Servo.h> 
 
 // the threshold for black line
-#define THRESHOLD 1020
+#define THRESHOLD 1015
 #define DEBUG 1
 
 /* Define motor controll inputs */

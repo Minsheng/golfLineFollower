@@ -4,10 +4,12 @@
 */
 
 #include <Servo.h> 
+#include <QueueArray.h>
 
 // the threshold for black line
 #define THRESHOLD 1020
 #define DEBUG 1
+#define SHARPTURN 1
 
 /* Define motor controll inputs */
 //motor A connected between A01 and A02 - Left Motor
@@ -44,9 +46,20 @@ int error = 0;
 //  store the last value of error
 int errorLast = 0;
 
+// keep track of the last n readings
+QueueArray<int> lastSensorQueue;
+
+// keep track of 10 readings
+int queueSize = 10;
+
+int sampleSize = 3;
+
+int turnMode = 0;
+
 /* Set up maximum speed and speed for turning (to be used with PWM) */
 // PWM to control motor speed [0 - 255]
-int maxSpeed = 90;
+int maxSpeed = 100;
+int fullSpeed = 255; // for very sharp turn
 
 /* variables to keep track of current speed of motors */
 int motorLSpeed = 90;
@@ -68,9 +81,26 @@ void setup() {
 }
 
 void loop() {
-  Scan();
-  ErrorCorrection();
-  Drive();
+  if (DEBUG == 1) {
+    testMotor();
+  } else {
+    Scan();
+    ErrorCorrection();
+    Drive();  
+  }
+}
+
+void testMotor() {
+  digitalWrite(STBY, HIGH);
+  // Left motor
+  analogWrite(PWMA, 255);
+  digitalWrite(AIN1, HIGH);
+  digitalWrite(AIN2, LOW);
+  // Right motor
+  digitalWrite(PWMB, 255);
+  digitalWrite(BIN1, HIGH);
+  digitalWrite(BIN2, LOW);
+  
 }
 
 void Scan() {
@@ -85,82 +115,88 @@ void Scan() {
       irSensorDigital[i] = 0;
     }
 
-    if (DEBUG) {
-      Serial.print("A");
-      Serial.print(i);
-      Serial.print(": ");
-      Serial.print(irSensorAnalog[i]);
-      Serial.print(" | ");
-    }
+//    if (DEBUG) {
+//      Serial.print("A");
+//      Serial.print(i);
+//      Serial.print(": ");
+//      Serial.print(irSensorAnalog[i]);
+//      Serial.print(" | ");
+//    }
 
     // calculate binary representation for sensor values
     int b = 4-i;
     irSensors = irSensors + (irSensorDigital[i]<<b);
+
+    // add sensor values to the queue, make sure the size is constantly n
+//    if (lastSensorQueue.count() <= queueSize) {
+//      lastSensorQueue.enqueue(irSensors);
+//    } else {
+//      int removed = lastSensorQueue.dequeue();
+//      lastSensorQueue.enqueue(irSensors);
+//    }
   }
 
-  if (DEBUG) {
-      Serial.println();
-  }
+//  if (DEBUG) {
+//      Serial.println();
+//  }
 }
 
 void ErrorCorrection() {
   
   errorLast = error;  
+  turnMode = 0; //reset turn mode
   
   switch (irSensors) {
     case B00000:
-      if (errorLast < 0) { error = -maxSpeed;}
-      else if (errorLast > 0) {error = maxSpeed;}
+      if (errorLast < 0) {
+        turnMode = 1;
+        error = -fullSpeed;
+        break;  
+      } else if (errorLast > 0) {
+        turnMode = 1;
+        error = fullSpeed;
+        break;
+      }
       Serial.println("Out of track!Crap!");
       break;
-    
     case B10000: // leftmost sensor on the line
       error = maxSpeed;
       Serial.println("Move left!");
       break;
-    
+    case B11000:
+      error = maxSpeed*1.5;
+      break;
     case B01000:
-      error = 15;
+      error = maxSpeed*0.2;
       Serial.println("Move slightly left!");
       break;
-    
+    case B01100:
+      error = maxSpeed*0.15;
+      break;
     case B00100:
       error = 0;
       Serial.println("Move forward!");
       break;
-
+    case B00110: // turn right slightly
+      error = -maxSpeed*0.15;
+      break;
     case B00010:
-      error = -15;
+      error = -maxSpeed*0.2;
       Serial.println("Move slightly right!");
       break;
-      
     case B00001: // rightmost sensor on the line
       error = -maxSpeed;
       Serial.println("Move right!");
       break;
-
-    /* 2 Sensors on the line */         
-     
-    case B11000:
-      error = 75;
-      break;
-    
-    case B01100:
-      error = 40;
-      break;
-    
-    case B00110: // turn right slightly
-      error = -40;
-      break;
-    
     case B00011: 
-      error = -75;
+      error = -maxSpeed*1.5;
       break;
 
     /* 3 Sensors on the line */    
-//    case B11100: // turn left
-//      error = maxSpeed;
-//      break;
+    case B11100: // turn left
+      turnMode = 1;
+      error = fullSpeed;
+      break;
 //      
 //    case B01110:
 //      if (errorLast > 0 && errorLast <= 255) {
@@ -170,23 +206,26 @@ void ErrorCorrection() {
 //      }
 //      break;
 //    
-//    case B00111:  // turn right
-//      error = -maxSpeed;
-//      break;
-//
+    case B00111:  // turn right
+      turnMode = 1;
+      error = fullSpeed;
+      break;
+
 //    /* 4 Sensors on the line */       
-//    case B11110:
-//      error = maxSpeed;
-//      break;
-//      
-//    case B01111:
-//      error = -maxSpeed;
+    case B11110:
+      turnMode = 1;
+      error = fullSpeed;
+      break;
+      
+    case B01111:
+      turnMode = 1;
+      error = -fullSpeed;
       break;
       
    /* 5 Sensors on the line */
-    case B11111: // goal detected, stop
-      digitalWrite(STBY, LOW);
-      break;
+//    case B11111: // goal detected, stop
+//      digitalWrite(STBY, LOW);
+//      break;
        
     default:
       error = errorLast;
@@ -202,6 +241,15 @@ void ErrorCorrection() {
 }
 
 void Drive() {
+  if (turnMode == 1) {
+    if (motorLSpeed <= 0 && motorRSpeed >= 0) {
+      motorLSpeed = -fullSpeed*0.3;
+      motorRSpeed = fullSpeed;
+    } else {
+      motorLSpeed = fullSpeed;
+      motorRSpeed = -fullSpeed*0.3;
+    }
+  }
   // disable standby
   digitalWrite(STBY, HIGH);
   

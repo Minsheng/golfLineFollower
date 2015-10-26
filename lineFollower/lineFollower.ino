@@ -1,13 +1,8 @@
-/*
-** Line Follower Basic v. 0.5
-** Last Update: 2013-05-21
-*/
-
-#include <Servo.h>
+#include <QTRSensors.h>
 #include <PID_v1.h>
 #include <PID_AutoTune_v0.h>
 
-#define DEBUG 1
+#define DEBUG 0
 #define INFO 1
 
 #define NUM_SENSORS             6  // number of sensors used
@@ -47,13 +42,11 @@ byte ATuneModeRemember=2;
 double input=80, output=50, setpoint=180;
 double kp=2,ki=0.5,kd=2;
 
-double kpmodel=1.5, taup=100, theta[50];
-double outputStart=5;
 double aTuneStep=50, aTuneNoise=1, aTuneStartValue=100;
 unsigned int aTuneLookBack=20;
 
 boolean tuning = false;
-unsigned long  modelTime, serialTime;
+unsigned long serialTime;
 
 PID myPID(&input, &output, &setpoint,kp,ki,kd, DIRECT);
 PID_ATune aTune(&input, &output);
@@ -71,10 +64,10 @@ void setup() {
   pinMode(PWMB,OUTPUT);
 
   // auto-calibrate
-  for (int i = 0; i < 100; i++) {
-    qtra.calibrate();
-    delay(20);
-  }
+//  for (int i = 0; i < 100; i++) {
+//    qtra.calibrate();
+//    delay(20);
+//  }
   
   //Setup the pid 
   myPID.SetMode(AUTOMATIC);
@@ -87,37 +80,25 @@ void setup() {
   
   serialTime = 0;
   
-  Serial.begin(115200);
+  Serial.begin(9600);
 }
 
 void loop() {
-  if (DEBUG == 1) {
-    testMotor();
-  } else {
-    Scan();
-  }
-}
-
-void testMotor() {
-  int testSpeed = 255;
-  digitalWrite(STBY, HIGH);
-  // Left motor
-  analogWrite(PWMA, testSpeed);
-  digitalWrite(AIN1, HIGH);
-  digitalWrite(AIN2, LOW);
-  // Right motor
-  digitalWrite(PWMB, testSpeed);
-  digitalWrite(BIN1, HIGH);
-  digitalWrite(BIN2, LOW);
-}
-
-void Scan() {
+//  if (DEBUG == 1) {
+//    testMotor();
+//  } else {
+//    Scan();
+//  }
   unsigned long now = millis();
 
   // read calibrated sensor values and obtain a measure of the line position from 0 to 5000
   // To get raw sensor values, call:
   //  qtra.read(sensorValues); instead of unsigned int position = qtra.readLine(sensorValues);
-  unsigned int position = qtra.readLine(sensorValues);
+  input = qtra.readLine(sensorValues);
+  if (INFO == 1) {
+    Serial.print("Input: ");
+    Serial.println(input);
+  }
   
   if (tuning) {
     byte val = (aTune.Runtime());
@@ -134,8 +115,11 @@ void Scan() {
     }
   } else {
     myPID.Compute();
+    Serial.println(output);
   }
 
+  // use output to calculate speed
+  
   //send-receive with processing if it's time
   if (millis()>serialTime) {
     SerialReceive();
@@ -144,50 +128,64 @@ void Scan() {
   }
 }
 
-void Drive() {
-
-  // recalculate speed for sharp turns
-  if (turnMode == 1) {
-    if (motorLSpeed <= 0 && motorRSpeed >= 0) {
-      motorLSpeed = -fullSpeed*0.3;
-      motorRSpeed = fullSpeed;
-    } else if (motorLSpeed >= 0 && motorRSpeed <= 0){
-      motorLSpeed = fullSpeed;
-      motorRSpeed = -fullSpeed*0.3;
-    }
-  }
-  
-  // disable standby
+void testMotor() {
+  int testSpeed = 255;
   digitalWrite(STBY, HIGH);
-  
-  if (motorRSpeed > 0) { // right motor forward (using PWM)
-     analogWrite(PWMB, motorRSpeed);
-     digitalWrite(BIN1, HIGH);
-     digitalWrite(BIN2, LOW);
-  } else if (motorRSpeed < 0) { // right motor reverse (using PWM)
-     analogWrite(PWMB, abs(motorRSpeed));
-     digitalWrite(BIN1, LOW);
-     digitalWrite(BIN2, HIGH);
-  } else if (motorRSpeed == 0) { // right motor fast stop
-     digitalWrite(PWMB, HIGH);
-     digitalWrite(BIN1, LOW);
-     digitalWrite(BIN2, LOW);
-  }
-  
-  if (motorLSpeed > 0) { // left motor forward (using PWM)
-     analogWrite(PWMA, motorLSpeed);
-     digitalWrite(AIN1, HIGH);
-     digitalWrite(AIN2, LOW);
-  } else if (motorLSpeed < 0) { // left motor reverse (using PWM)
-     analogWrite(PWMA, abs(motorLSpeed));
-     digitalWrite(AIN1, LOW);
-     digitalWrite(AIN2, HIGH);
-  } else if (motorLSpeed == 0) { // left motor fast stop
-     digitalWrite(PWMA, HIGH);
-     digitalWrite(AIN1, LOW);
-     digitalWrite(AIN2, LOW);
-  }
+  // Left motor
+  analogWrite(PWMA, testSpeed);
+  digitalWrite(AIN1, HIGH);
+  digitalWrite(AIN2, LOW);
+  // Right motor
+  digitalWrite(PWMB, testSpeed);
+  digitalWrite(BIN1, HIGH);
+  digitalWrite(BIN2, LOW);
 }
+
+//
+//void Drive() {
+//
+//  // recalculate speed for sharp turns
+//  if (turnMode == 1) {
+//    if (motorLSpeed <= 0 && motorRSpeed >= 0) {
+//      motorLSpeed = -fullSpeed*0.3;
+//      motorRSpeed = fullSpeed;
+//    } else if (motorLSpeed >= 0 && motorRSpeed <= 0){
+//      motorLSpeed = fullSpeed;
+//      motorRSpeed = -fullSpeed*0.3;
+//    }
+//  }
+//  
+//  // disable standby
+//  digitalWrite(STBY, HIGH);
+//  
+//  if (motorRSpeed > 0) { // right motor forward (using PWM)
+//     analogWrite(PWMB, motorRSpeed);
+//     digitalWrite(BIN1, HIGH);
+//     digitalWrite(BIN2, LOW);
+//  } else if (motorRSpeed < 0) { // right motor reverse (using PWM)
+//     analogWrite(PWMB, abs(motorRSpeed));
+//     digitalWrite(BIN1, LOW);
+//     digitalWrite(BIN2, HIGH);
+//  } else if (motorRSpeed == 0) { // right motor fast stop
+//     digitalWrite(PWMB, HIGH);
+//     digitalWrite(BIN1, LOW);
+//     digitalWrite(BIN2, LOW);
+//  }
+//  
+//  if (motorLSpeed > 0) { // left motor forward (using PWM)
+//     analogWrite(PWMA, motorLSpeed);
+//     digitalWrite(AIN1, HIGH);
+//     digitalWrite(AIN2, LOW);
+//  } else if (motorLSpeed < 0) { // left motor reverse (using PWM)
+//     analogWrite(PWMA, abs(motorLSpeed));
+//     digitalWrite(AIN1, LOW);
+//     digitalWrite(AIN2, HIGH);
+//  } else if (motorLSpeed == 0) { // left motor fast stop
+//     digitalWrite(PWMA, HIGH);
+//     digitalWrite(AIN1, LOW);
+//     digitalWrite(AIN2, LOW);
+//  }
+//}
 
 void changeAutoTune()
 {

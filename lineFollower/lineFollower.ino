@@ -4,11 +4,14 @@
 */
 
 #include <Servo.h>
+#include <PID_v1.h>
+#include <PID_AutoTune_v0.h>
 
-// the threshold for black line
-#define THRESHOLD 1020
 #define DEBUG 1
-#define SHARPTURN 1
+#define INFO 1
+
+#define NUM_SENSORS             6  // number of sensors used
+#define NUM_SAMPLES_PER_SENSOR  4  // average 4 analog samples per sensor reading
 
 /* Define motor controll inputs */
 //motor A connected between A01 and A02 - Left Motor
@@ -25,48 +28,64 @@
 #define BIN1 11 //Direction
 #define BIN2 12 //Direction
 
-/* Define the pins for the IR receivers */
-int irPins[5] = {A0, A1, A2, A3, A4};
-
-/* Define values for the IR Sensor readings */
-
-// an array to hold values from analogRead on the ir sensor (0-1023)
-int irSensorAnalog[5] = {0,0,0,0,0};
-
-// an array to hold boolean values (1/0) for the ir sensors, based on the analog read and the predefined THRESHOLD
-int irSensorDigital[5] = {0,0,0,0,0}; 
-
-// binary representation of the sensor reading from left to right
-int irSensors = B00000;
-
-// a score to determine deviation from the line [-180 ; +180]. Negative means the robot is left of the line.
-int error = 0;
-
-//  store the last value of error
-int errorLast = 0;
-
-int turnMode = 0;
+// sensors 0 through 5 are connected to analog inputs 0 through 5, respectively
+QTRSensorsAnalog qtra((unsigned char[]) {0, 1, 2, 3, 4, 5}, 
+  NUM_SENSORS, NUM_SAMPLES_PER_SENSOR, QTR_NO_EMITTER_PIN);
+unsigned int sensorValues[NUM_SENSORS];
 
 /* Set up maximum speed and speed for turning (to be used with PWM) */
 // PWM to control motor speed [0 - 255]
-int maxSpeed = 100;
+int maxSpeed = 120;
 int fullSpeed = 255; // for very sharp turn
 
 /* variables to keep track of current speed of motors */
-int motorLSpeed = 90;
-int motorRSpeed = 90;
+int motorLSpeed = 120;
+int motorRSpeed = 120;
+
+/* For PID algorithm */
+byte ATuneModeRemember=2;
+double input=80, output=50, setpoint=180;
+double kp=2,ki=0.5,kd=2;
+
+double kpmodel=1.5, taup=100, theta[50];
+double outputStart=5;
+double aTuneStep=50, aTuneNoise=1, aTuneStartValue=100;
+unsigned int aTuneLookBack=20;
+
+boolean tuning = false;
+unsigned long  modelTime, serialTime;
+
+PID myPID(&input, &output, &setpoint,kp,ki,kd, DIRECT);
+PID_ATune aTune(&input, &output);
+
+int lastError = 0;
 
 void setup() {
   /* Set up motor controll pins as output */
   pinMode(STBY, OUTPUT);
-  
   pinMode(AIN1,OUTPUT);        
   pinMode(AIN2,OUTPUT);
   pinMode(PWMA,OUTPUT);
-  
   pinMode(BIN1,OUTPUT);        
   pinMode(BIN2,OUTPUT);
   pinMode(PWMB,OUTPUT);
+
+  // auto-calibrate
+  for (int i = 0; i < 100; i++) {
+    qtra.calibrate();
+    delay(20);
+  }
+  
+  //Setup the pid 
+  myPID.SetMode(AUTOMATIC);
+
+  if (tuning) {
+    tuning=false;
+    changeAutoTune();
+    tuning=true;
+  }
+  
+  serialTime = 0;
   
   Serial.begin(115200);
 }
@@ -76,134 +95,52 @@ void loop() {
     testMotor();
   } else {
     Scan();
-    ErrorCorrection();
-    Drive();  
   }
 }
 
 void testMotor() {
+  int testSpeed = 255;
   digitalWrite(STBY, HIGH);
   // Left motor
-  analogWrite(PWMA, 255);
+  analogWrite(PWMA, testSpeed);
   digitalWrite(AIN1, HIGH);
   digitalWrite(AIN2, LOW);
   // Right motor
-  digitalWrite(PWMB, 255);
+  digitalWrite(PWMB, testSpeed);
   digitalWrite(BIN1, HIGH);
   digitalWrite(BIN2, LOW);
 }
 
 void Scan() {
-  irSensors = B00000;
-    
-  for (int i = 0; i < 5; i++) {
-    irSensorAnalog[i] = analogRead(irPins[i]);
+  unsigned long now = millis();
 
-    if (irSensorAnalog[i] >= THRESHOLD) {
-      irSensorDigital[i] = 1;
-    } else {
-      irSensorDigital[i] = 0;
-    }
-
-//    if (DEBUG) {
-//      Serial.print("A");
-//      Serial.print(i);
-//      Serial.print(": ");
-//      Serial.print(irSensorAnalog[i]);
-//      Serial.print(" | ");
-//    }
-
-    // calculate binary representation for sensor values
-    int b = 4-i;
-    irSensors = irSensors + (irSensorDigital[i]<<b);
-  }
-}
-
-
-void ErrorCorrection() {
-  errorLast = error;  
-  turnMode = 0; //reset turn mode
+  // read calibrated sensor values and obtain a measure of the line position from 0 to 5000
+  // To get raw sensor values, call:
+  //  qtra.read(sensorValues); instead of unsigned int position = qtra.readLine(sensorValues);
+  unsigned int position = qtra.readLine(sensorValues);
   
-  switch (irSensors) {
-    case B00000:
-      if (errorLast < 0) {
-        turnMode = 1;
-        error = -fullSpeed;
-        break;  
-      } else if (errorLast > 0) {
-        turnMode = 1;
-        error = fullSpeed;
-        break;
-      }
-      Serial.println("Out of track!Crap!");
-      break;
-    case B10000: // leftmost sensor on the line
-      error = maxSpeed;
-      Serial.println("Move left!");
-      break;
-    case B11000:
-      error = maxSpeed*1.5;
-      break;
-    case B01000:
-      error = maxSpeed*0.2;
-      Serial.println("Move slightly left!");
-      break;
-    case B01100:
-      error = maxSpeed*0.15;
-      break;
-    case B00100:
-      error = 0;
-      Serial.println("Move forward!");
-      break;
-    case B00110: // turn right slightly
-      error = -maxSpeed*0.15;
-      break;
-    case B00010:
-      error = -maxSpeed*0.2;
-      Serial.println("Move slightly right!");
-      break;
-    case B00001: // rightmost sensor on the line
-      error = -maxSpeed;
-      Serial.println("Move right!");
-      break;
-    case B00011: 
-      error = -maxSpeed*1.5;
-      break;   
-    case B11100: // turn left
-      turnMode = 1;
-      error = fullSpeed;
-      break;
-//      
-//    case B01110:
-//      if (errorLast > 0 && errorLast <= 255) {
-//        error = maxSpeed;
-//      } else {
-//        error = -maxSpeed;
-//      }
-//      break;
-//    
-    case B00111:  // turn right
-      turnMode = 1;
-      error = fullSpeed;
-      break;     
-    case B11110:
-      turnMode = 1;
-      error = fullSpeed;
-      break;
-    case B01111:
-      turnMode = 1;
-      error = -fullSpeed;
-      break;
-    default:
-      error = errorLast;
+  if (tuning) {
+    byte val = (aTune.Runtime());
+    if (val!=0) {
+      tuning = false;
+    }
+    
+    if (!tuning) { //we're done, set the tuning parameters
+      kp = aTune.GetKp();
+      ki = aTune.GetKi();
+      kd = aTune.GetKd();
+      myPID.SetTunings(kp,ki,kd);
+      AutoTuneHelper(false);
+    }
+  } else {
+    myPID.Compute();
   }
 
-  if (error >= 0) { // turn left (right motor speed > left motor speed)
-    motorLSpeed = maxSpeed - error;
-    motorRSpeed = maxSpeed;
-  } else { // turn right (right motor speed < left motor speed)
-    motorLSpeed = maxSpeed;
-    motorRSpeed = maxSpeed + error;
+  //send-receive with processing if it's time
+  if (millis()>serialTime) {
+    SerialReceive();
+    SerialSend();
+    serialTime+=500;
   }
 }
 
@@ -214,7 +151,7 @@ void Drive() {
     if (motorLSpeed <= 0 && motorRSpeed >= 0) {
       motorLSpeed = -fullSpeed*0.3;
       motorRSpeed = fullSpeed;
-    } else {
+    } else if (motorLSpeed >= 0 && motorRSpeed <= 0){
       motorLSpeed = fullSpeed;
       motorRSpeed = -fullSpeed*0.3;
     }
@@ -249,5 +186,57 @@ void Drive() {
      digitalWrite(PWMA, HIGH);
      digitalWrite(AIN1, LOW);
      digitalWrite(AIN2, LOW);
+  }
+}
+
+void changeAutoTune()
+{
+ if(!tuning)
+  {
+    //Set the output to the desired starting frequency.
+    output=aTuneStartValue;
+    aTune.SetNoiseBand(aTuneNoise);
+    aTune.SetOutputStep(aTuneStep);
+    aTune.SetLookbackSec((int)aTuneLookBack);
+    AutoTuneHelper(true);
+    tuning = true;
+  }
+  else
+  { //cancel autotune
+    aTune.Cancel();
+    tuning = false;
+    AutoTuneHelper(false);
+  }
+}
+
+void AutoTuneHelper(boolean start)
+{
+  if(start)
+    ATuneModeRemember = myPID.GetMode();
+  else
+    myPID.SetMode(ATuneModeRemember);
+}
+
+void SerialSend()
+{
+  Serial.print("setpoint: ");Serial.print(setpoint); Serial.print(" ");
+  Serial.print("input: ");Serial.print(input); Serial.print(" ");
+  Serial.print("output: ");Serial.print(output); Serial.print(" ");
+  if(tuning){
+    Serial.println("tuning mode");
+  } else {
+    Serial.print("kp: ");Serial.print(myPID.GetKp());Serial.print(" ");
+    Serial.print("ki: ");Serial.print(myPID.GetKi());Serial.print(" ");
+    Serial.print("kd: ");Serial.print(myPID.GetKd());Serial.println();
+  }
+}
+
+void SerialReceive()
+{
+  if(Serial.available())
+  {
+   char b = Serial.read(); 
+   Serial.flush(); 
+   if((b=='1' && !tuning) || (b!='1' && tuning))changeAutoTune();
   }
 }

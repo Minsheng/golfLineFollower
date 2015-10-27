@@ -1,5 +1,15 @@
 #include <QTRSensors.h>
 
+// The main loop of the example reads the calibrated sensor values and uses them to
+// estimate the position of a line.  You can test this by taping a piece of 3/4" black
+// electrical tape to a piece of white paper and sliding the sensor across it.  It
+// prints the sensor values to the serial monitor as numbers from 0 (maximum reflectance) 
+// to 1000 (minimum reflectance) followed by the estimated location of the line as a number
+// from 0 to 5000.  1000 means the line is directly under sensor 1, 2000 means directly
+// under sensor 2, etc.  0 means the line is directly under sensor 0 or was last seen by
+// sensor 0 before being lost.  5000 means the line is directly under sensor 5 or was
+// last seen by sensor 5 before being lost.
+
 #define DEBUG 0
 #define INFO 1
 
@@ -44,34 +54,37 @@ void setup() {
   pinMode(BIN2,OUTPUT);
   pinMode(PWMB,OUTPUT);
 
-  // Auto-calibration: turn right and left while calibrating the
-  // sensors.
-  for(int counter=0;counter<100;counter++)
-  {
-    if(counter < 20 || counter >= 60)
-      set_motors(40,-40);
-    else
-      set_motors(-40,40);
-
-    // This function records a set of sensor readings and keeps
-    // track of the minimum and maximum values encountered.  The
-    // IR_EMITTERS_ON argument means that the IR LEDs will be
-    // turned on during the reading, which is usually what you
-    // want.
-    qtra.calibrate();
-
-    // Since our counter runs to 80, the total delay will be
-    // 80*20 = 1600 ms.
-    delay(20);
+  if (!DEBUG) {
+    // Auto-calibration: turn right and left while calibrating the
+    // sensors.
+    for(int counter=0;counter<100;counter++)
+    {
+      if(counter < 20 || counter >= 60)
+        set_motors(40,-40);
+      else
+        set_motors(-40,40);
+  
+      // This function records a set of sensor readings and keeps
+      // track of the minimum and maximum values encountered.  The
+      // IR_EMITTERS_ON argument means that the IR LEDs will be
+      // turned on during the reading, which is usually what you
+      // want.
+      qtra.calibrate();
+  
+      // Since our counter runs to 80, the total delay will be
+      // 80*20 = 1600 ms.
+      delay(20);
+    }
+    set_motors(0,0);
   }
-  set_motors(0,0);
   
   Serial.begin(9600);
 }
 
 void loop() {
   if (DEBUG == 1) {
-    testSensor();
+//    testSensor();
+    testMotor();
   } else {
     scan();
   }
@@ -86,7 +99,7 @@ void scan() {
   position = qtra.readLine(sensorValues);
   
   // The "error" term should be 0 when we are on the line.
-  int error = (int) position - 2000;
+  int error = (int) position - 2500;
 
   int derivative = error - lastError;
 
@@ -107,7 +120,7 @@ void scan() {
   
   // Compute the actual motor settings.  We never set either motor
   // to a negative value.
-  const int max = 60;
+  const int max = 70;
   if(power_difference > max)
     power_difference = max;
   
@@ -162,7 +175,7 @@ void testSensor() {
 }
 
 void testMotor() {
-  int testSpeed = 255;
+  int testSpeed = 60;
   digitalWrite(STBY, HIGH);
   // Left motor
   analogWrite(PWMA, testSpeed);
@@ -173,49 +186,3 @@ void testMotor() {
   digitalWrite(BIN1, HIGH);
   digitalWrite(BIN2, LOW);
 }
-
-//
-//void Drive() {
-//
-//  // recalculate speed for sharp turns
-//  if (turnMode == 1) {
-//    if (motorLSpeed <= 0 && motorRSpeed >= 0) {
-//      motorLSpeed = -fullSpeed*0.3;
-//      motorRSpeed = fullSpeed;
-//    } else if (motorLSpeed >= 0 && motorRSpeed <= 0){
-//      motorLSpeed = fullSpeed;
-//      motorRSpeed = -fullSpeed*0.3;
-//    }
-//  }
-//  
-//  // disable standby
-//  digitalWrite(STBY, HIGH);
-//  
-//  if (motorRSpeed > 0) { // right motor forward (using PWM)
-//     analogWrite(PWMB, motorRSpeed);
-//     digitalWrite(BIN1, HIGH);
-//     digitalWrite(BIN2, LOW);
-//  } else if (motorRSpeed < 0) { // right motor reverse (using PWM)
-//     analogWrite(PWMB, abs(motorRSpeed));
-//     digitalWrite(BIN1, LOW);
-//     digitalWrite(BIN2, HIGH);
-//  } else if (motorRSpeed == 0) { // right motor fast stop
-//     digitalWrite(PWMB, HIGH);
-//     digitalWrite(BIN1, LOW);
-//     digitalWrite(BIN2, LOW);
-//  }
-//  
-//  if (motorLSpeed > 0) { // left motor forward (using PWM)
-//     analogWrite(PWMA, motorLSpeed);
-//     digitalWrite(AIN1, HIGH);
-//     digitalWrite(AIN2, LOW);
-//  } else if (motorLSpeed < 0) { // left motor reverse (using PWM)
-//     analogWrite(PWMA, abs(motorLSpeed));
-//     digitalWrite(AIN1, LOW);
-//     digitalWrite(AIN2, HIGH);
-//  } else if (motorLSpeed == 0) { // left motor fast stop
-//     digitalWrite(PWMA, HIGH);
-//     digitalWrite(AIN1, LOW);
-//     digitalWrite(AIN2, LOW);
-//  }
-//}

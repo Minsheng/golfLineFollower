@@ -1,12 +1,16 @@
 #include <QTRSensors.h>
-#include <PID_v1.h>
-#include <PID_AutoTune_v0.h>
 
 #define DEBUG 0
 #define INFO 1
 
-#define NUM_SENSORS             6  // number of sensors used
-#define NUM_SAMPLES_PER_SENSOR  4  // average 4 analog samples per sensor reading
+#define Kp 1.6 // experiment to determine this, start by something small that just makes your bot follow the line at a slow speed
+#define Kd 1.8 // experiment to determine this, slowly increase the speeds and adjust this value. ( Note: Kp < Kd) 
+#define rightMaxSpeed 200 // max speed of the robot
+#define leftMaxSpeed 200 // max speed of the robot
+#define rightBaseSpeed 90 // this is the speed at which the motors should spin when the robot is perfectly on the line
+#define leftBaseSpeed 90  // this is the speed at which the motors should spin when the robot is perfectly on the line
+#define NUM_SENSORS  6     // number of sensors used
+#define NUM_SAMPLES_PER_SENSOR 4
 
 /* Define motor controll inputs */
 //motor A connected between A01 and A02 - Left Motor
@@ -28,29 +32,6 @@ QTRSensorsAnalog qtra((unsigned char[]) {0, 1, 2, 3, 4, 5},
   NUM_SENSORS, NUM_SAMPLES_PER_SENSOR, QTR_NO_EMITTER_PIN);
 unsigned int sensorValues[NUM_SENSORS];
 
-/* Set up maximum speed and speed for turning (to be used with PWM) */
-// PWM to control motor speed [0 - 255]
-int maxSpeed = 120;
-int fullSpeed = 255; // for very sharp turn
-
-/* variables to keep track of current speed of motors */
-int motorLSpeed = 120;
-int motorRSpeed = 120;
-
-/* For PID algorithm */
-byte ATuneModeRemember=2;
-double input=80, output=50, setpoint=180;
-double kp=2,ki=0.5,kd=2;
-
-double aTuneStep=50, aTuneNoise=1, aTuneStartValue=100;
-unsigned int aTuneLookBack=20;
-
-boolean tuning = false;
-unsigned long serialTime;
-
-PID myPID(&input, &output, &setpoint,kp,ki,kd, DIRECT);
-PID_ATune aTune(&input, &output);
-
 int lastError = 0;
 
 void setup() {
@@ -63,69 +44,121 @@ void setup() {
   pinMode(BIN2,OUTPUT);
   pinMode(PWMB,OUTPUT);
 
-  // auto-calibrate
-//  for (int i = 0; i < 100; i++) {
-//    qtra.calibrate();
-//    delay(20);
-//  }
-  
-  //Setup the pid 
-  myPID.SetMode(AUTOMATIC);
+  // Auto-calibration: turn right and left while calibrating the
+  // sensors.
+  for(int counter=0;counter<100;counter++)
+  {
+    if(counter < 20 || counter >= 60)
+      set_motors(40,-40);
+    else
+      set_motors(-40,40);
 
-  if (tuning) {
-    tuning=false;
-    changeAutoTune();
-    tuning=true;
+    // This function records a set of sensor readings and keeps
+    // track of the minimum and maximum values encountered.  The
+    // IR_EMITTERS_ON argument means that the IR LEDs will be
+    // turned on during the reading, which is usually what you
+    // want.
+    qtra.calibrate();
+
+    // Since our counter runs to 80, the total delay will be
+    // 80*20 = 1600 ms.
+    delay(20);
   }
-  
-  serialTime = 0;
+  set_motors(0,0);
   
   Serial.begin(9600);
 }
 
 void loop() {
-//  if (DEBUG == 1) {
-//    testMotor();
-//  } else {
-//    Scan();
-//  }
-  unsigned long now = millis();
-
-  // read calibrated sensor values and obtain a measure of the line position from 0 to 5000
-  // To get raw sensor values, call:
-  //  qtra.read(sensorValues); instead of unsigned int position = qtra.readLine(sensorValues);
-  input = qtra.readLine(sensorValues);
-  if (INFO == 1) {
-    Serial.print("Input: ");
-    Serial.println(input);
-  }
-  
-  if (tuning) {
-    byte val = (aTune.Runtime());
-    if (val!=0) {
-      tuning = false;
-    }
-    
-    if (!tuning) { //we're done, set the tuning parameters
-      kp = aTune.GetKp();
-      ki = aTune.GetKi();
-      kd = aTune.GetKd();
-      myPID.SetTunings(kp,ki,kd);
-      AutoTuneHelper(false);
-    }
+  if (DEBUG == 1) {
+    testSensor();
   } else {
-    myPID.Compute();
-    Serial.println(output);
+    scan();
   }
+}
 
-  // use output to calculate speed
+void scan() {
+  unsigned int position = 0;
+  long integral=0;
   
-  //send-receive with processing if it's time
-  if (millis()>serialTime) {
-    SerialReceive();
-    SerialSend();
-    serialTime+=500;
+  // get calibrated readings along with the line position, 
+  // refer to the QTR Sensors Arduino Library for more details on line position.
+  position = qtra.readLine(sensorValues);
+  
+  // The "error" term should be 0 when we are on the line.
+  int error = (int) position - 2000;
+
+  int derivative = error - lastError;
+
+  integral += error;
+  
+  lastError = error;
+
+  // Compute the difference between the two motor power settings,
+  // m1 - m2.  If this is a positive number the robot will turn
+  // to the right.  If it is a negative number, the robot will
+  // turn to the left, and the magnitude of the number determines
+  // the sharpness of the turn.
+  int power_difference = error/20 + integral/10000 + derivative*3/2;
+
+  if (INFO == 1) {
+    Serial.println(power_difference);
   }
+  
+  // Compute the actual motor settings.  We never set either motor
+  // to a negative value.
+  const int max = 60;
+  if(power_difference > max)
+    power_difference = max;
+  
+  if(power_difference < -max)
+    power_difference = -max;
+
+  int leftMotorSpeed = 0;
+  int rightMotorSpeed = 0;
+  if (power_difference < 0) {
+    leftMotorSpeed = max+power_difference;
+    rightMotorSpeed = max;
+  } else {
+    leftMotorSpeed = max;
+    rightMotorSpeed = max-power_difference;
+  }
+  
+  set_motors(leftMotorSpeed, rightMotorSpeed);
+      
+  if (INFO == 1) {
+    Serial.print(leftMotorSpeed);
+    Serial.print('\t');
+    Serial.print(rightMotorSpeed);
+    Serial.println();
+  }
+}
+
+void set_motors(int leftMotorSpeed, int rightMotorSpeed) {
+  digitalWrite(STBY, HIGH);
+  digitalWrite(BIN1, HIGH);
+  digitalWrite(BIN2, LOW);
+  analogWrite(PWMB, rightMotorSpeed);
+  digitalWrite(STBY, HIGH);
+  digitalWrite(AIN1, HIGH);
+  digitalWrite(AIN2, LOW);
+  analogWrite(PWMA, leftMotorSpeed);
+}
+
+void testSensor() {
+  // read raw sensor values
+  qtra.read(sensorValues);
+  
+  // print the sensor values as numbers from 0 to 1023, where 0 means maximum reflectance and
+  // 1023 means minimum reflectance
+  for (unsigned char i = 0; i < NUM_SENSORS; i++)
+  {
+    Serial.print(sensorValues[i]);
+    Serial.print('\t'); // tab to format the raw data into columns in the Serial monitor
+  }
+  Serial.println();
+  
+  delay(250);  
 }
 
 void testMotor() {
@@ -186,55 +219,3 @@ void testMotor() {
 //     digitalWrite(AIN2, LOW);
 //  }
 //}
-
-void changeAutoTune()
-{
- if(!tuning)
-  {
-    //Set the output to the desired starting frequency.
-    output=aTuneStartValue;
-    aTune.SetNoiseBand(aTuneNoise);
-    aTune.SetOutputStep(aTuneStep);
-    aTune.SetLookbackSec((int)aTuneLookBack);
-    AutoTuneHelper(true);
-    tuning = true;
-  }
-  else
-  { //cancel autotune
-    aTune.Cancel();
-    tuning = false;
-    AutoTuneHelper(false);
-  }
-}
-
-void AutoTuneHelper(boolean start)
-{
-  if(start)
-    ATuneModeRemember = myPID.GetMode();
-  else
-    myPID.SetMode(ATuneModeRemember);
-}
-
-void SerialSend()
-{
-  Serial.print("setpoint: ");Serial.print(setpoint); Serial.print(" ");
-  Serial.print("input: ");Serial.print(input); Serial.print(" ");
-  Serial.print("output: ");Serial.print(output); Serial.print(" ");
-  if(tuning){
-    Serial.println("tuning mode");
-  } else {
-    Serial.print("kp: ");Serial.print(myPID.GetKp());Serial.print(" ");
-    Serial.print("ki: ");Serial.print(myPID.GetKi());Serial.print(" ");
-    Serial.print("kd: ");Serial.print(myPID.GetKd());Serial.println();
-  }
-}
-
-void SerialReceive()
-{
-  if(Serial.available())
-  {
-   char b = Serial.read(); 
-   Serial.flush(); 
-   if((b=='1' && !tuning) || (b!='1' && tuning))changeAutoTune();
-  }
-}

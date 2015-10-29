@@ -18,6 +18,7 @@
 #define INFO 1 // if INFO is on, print debug info
 
 int SHOOT_MODE = 0;
+int INIT_NAV_MODE = 1;
 
 /* For distance sensor */
 #define ECHO_PIN 3
@@ -49,7 +50,8 @@ int SHOOT_MODE = 0;
 #define BIN1 11
 #define BIN2 12
 
-#define MAX_SPEED 80
+#define MAX_SPEED 100
+#define CALI_SPEED 50 // speed when calibrating
 
 /* sensors 0 through 5 are connected to analog inputs 0 through 5, respectively */
 QTRSensorsAnalog qtra((unsigned char[]) {0, 1, 2, 3, 4, 5}, 
@@ -58,6 +60,9 @@ unsigned int sensorValues[NUM_SENSORS];
 
 NewPing sonar(TRIG_PIN, ECHO_PIN, MAX_DISTANCE);
 unsigned int uS; // distance raw value read from sonar
+
+unsigned int pingSpeed = 50; // How frequently are we going to send out a ping (in milliseconds). 50ms would be 20 times a second.
+unsigned long pingTimer;     // Holds the next ping time.
 
 int lastError = 0;
 
@@ -71,48 +76,103 @@ void setup() {
   pinMode(BIN2,OUTPUT);
   pinMode(PWMB,OUTPUT);
 
+  Serial.begin(9600);
+  
   if (!DEBUG) {
+    pingTimer = millis(); // Start now.
+    for (int i = 0; i < 100; i++) {
+      if (INIT_NAV_MODE) {
+        // get a good sample
+//        uS = sonar.ping_median(10);
+//      
+//        // convert to cm
+//        int cm = (int)uS / US_ROUNDTRIP_CM;
+//  
+//        if (cm > 0 && cm <= MAX_STOP_DISTANCE) {
+//          Serial.println("Avoiding walls...");
+//          set_motors(100, -100);
+//        } else {
+//          Serial.println("Route detected, moving out...");
+//          INIT_NAV_MODE = 0; // move out of the starting area
+//          // move forward for 400ms
+//          for (int j = 0; j < 20; j++) {
+//            set_motors(40, 40);
+//            delay(20);
+//          }
+//        }
+//        
+//        Serial.print("Ping: ");
+//        Serial.print(uS);
+//        Serial.println();
+
+        if (millis() >= pingTimer) {
+          pingTimer += pingSpeed;
+          uS = sonar.ping_median(10);
+          int cm = (int)uS / US_ROUNDTRIP_CM;
+
+          Serial.print("Ping: ");
+          Serial.print(cm);
+          Serial.println();
+          
+          if (cm > 0 && cm <= MAX_STOP_DISTANCE) {
+            Serial.println("Rotating...");
+            set_motors(60, -60);
+          } else {
+            INIT_NAV_MODE = 0;
+            Serial.println("Route detected, moving out...");
+            set_motors(0,0);
+//            pingTimer = millis();
+//            for (int k = 0; k < 100; k++) {
+//              if (millis() >= pingTimer) {
+//                pingTimer += pingSpeed;
+//                set_motors(50, 50);
+//              }
+//            }
+          }
+        }
+      }
+    }
+
+    Serial.println("Starting to calibrate in 3 seconds...");
+    delay(3000);
+    
+    calibrateLikeCrazyMotherFucker(20, 100);
     // Auto-calibration: turn right and left while calibrating the
     // sensors.
-    for (int counter=0; counter<100; counter++) {
-      if (counter < 20 || counter >= 60)
-        set_motors(50,0);
-      else
-        set_motors(0,50);
-  
-      // This function records a set of sensor readings and keeps
-      // track of the minimum and maximum values encountered.  The
-      // IR_EMITTERS_ON argument means that the IR LEDs will be
-      // turned on during the reading, which is usually what you
-      // want.
-      qtra.calibrate();
-  
-      // the total delay is (# of loops)*(delay time/loop),
-      // i.e., 100*20 = 2000 ms.
-      delay(20);
-    }
+//    for (int counter=0; counter<100; counter++) {
+//      if (counter < 20 || counter >= 60)
+//        set_motors(50,-50);
+//      else
+//        set_motors(-50,50);
+//  
+//      // This function records a set of sensor readings and keeps
+//      // track of the minimum and maximum values encountered.  The
+//      // IR_EMITTERS_ON argument means that the IR LEDs will be
+//      // turned on during the reading, which is usually what you
+//      // want.
+//      qtra.calibrate();
+//  
+//      // the total delay is (# of loops)*(delay time/loop),
+//      // i.e., 100*20 = 2000 ms.
+//      delay(20);
+//    }
     
     set_motors(0,0); // stop the motor for a second
   }
-  
-  Serial.begin(9600);
 }
 
 void loop() {
-  if (DEBUG == 1) {
+  if (DEBUG) {
     // enable the following functions as needed
 //    testSensor();
 //    testMotor();
   } else {
-    // execute main function
-//    lineFollowDrive();
-    
     if (!SHOOT_MODE) {
       // execute main function
       lineFollowDrive();
       
-      // get a good sample
-      uS = sonar.ping_median(8);
+      // get a good sample, the larger the sample the longer it takes to read
+      uS = sonar.ping_median(5);
     
       // convert to cm
       int cm = (int)uS / US_ROUNDTRIP_CM;
@@ -216,16 +276,56 @@ void lineFollowDrive() {
   }
 }
 
+/* Auto-calibration: turn right and left while calibrating the sensors.
+ * baseDelayTime: base delay time, delayCounter: the number of loops to delay
+ */
+void calibrateLikeCrazyMotherFucker(int baseDelayTime, int delayCounter) {
+  for (int counter=0; counter<delayCounter; counter++) {
+    if (counter < 20 || counter >= 60)
+      set_motors(CALI_SPEED,-CALI_SPEED);
+    else
+      set_motors(-CALI_SPEED,CALI_SPEED);
+
+    // This function records a set of sensor readings and keeps
+    // track of the minimum and maximum values encountered.  The
+    // IR_EMITTERS_ON argument means that the IR LEDs will be
+    // turned on during the reading, which is usually what you
+    // want.
+    qtra.calibrate();
+
+    // the total delay is (# of loops)*(delay time/loop),
+    // i.e., 100*20 = 2000 ms.
+    delay(baseDelayTime);
+  }
+}
+
 /* Drive the robot by enabling power in left and right motors */
 void set_motors(int leftMotorSpeed, int rightMotorSpeed) {
-  digitalWrite(STBY, HIGH);
-  digitalWrite(BIN1, HIGH);
-  digitalWrite(BIN2, LOW);
-  analogWrite(PWMB, rightMotorSpeed);
-  digitalWrite(STBY, HIGH);
-  digitalWrite(AIN1, HIGH);
-  digitalWrite(AIN2, LOW);
-  analogWrite(PWMA, leftMotorSpeed);
+//  digitalWrite(STBY, HIGH);
+
+  if (rightMotorSpeed < 0) { // move backwards
+    digitalWrite(STBY, HIGH);
+    digitalWrite(BIN1, LOW);
+    digitalWrite(BIN2, HIGH);
+    analogWrite(PWMB, abs(rightMotorSpeed));
+  } else { // move forward
+    digitalWrite(STBY, HIGH);
+    digitalWrite(BIN1, HIGH);
+    digitalWrite(BIN2, LOW);
+    analogWrite(PWMB, rightMotorSpeed);
+  }
+  
+  if (leftMotorSpeed < 0) { // move backwards
+    digitalWrite(STBY, HIGH);
+    digitalWrite(AIN1, LOW);
+    digitalWrite(AIN2, HIGH);
+    analogWrite(PWMA, abs(leftMotorSpeed));
+  } else { // move forward
+    digitalWrite(STBY, HIGH);
+    digitalWrite(AIN1, HIGH);
+    digitalWrite(AIN2, LOW);
+    analogWrite(PWMA, leftMotorSpeed);
+  }
 }
 
 /* Read raw sensor values from the QTR Reflectance Sensors */

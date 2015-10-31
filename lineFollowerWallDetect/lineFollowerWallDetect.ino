@@ -1,5 +1,6 @@
 #include <QTRSensors.h>
 #include <NewPing.h>
+#include <Servo.h>
 
 // The PID control algorithm is based on the Advanced Line Following Algorithm with 3pi robot,
 // please refer to https://www.pololu.com/docs/0J21/7.c for original code.
@@ -26,6 +27,10 @@ int INIT_NAV_MODE = 1;
 #define MAX_DISTANCE 80
 #define MAX_STOP_DISTANCE 20
 
+/* For Servo Arms */
+#define LEFT_SERVO_PIN 10
+#define RIGHT_SERVO_PIN 9
+
 /* For PID control */
 #define Kp 0.05 // proportional constant
 #define Ki 0.0001 // integral constant
@@ -50,7 +55,7 @@ int INIT_NAV_MODE = 1;
 #define BIN1 11
 #define BIN2 12
 
-#define MAX_SPEED 100
+#define MAX_SPEED 100 // maximum when driving
 #define CALI_SPEED 50 // speed when calibrating
 
 /* sensors 0 through 5 are connected to analog inputs 0 through 5, respectively */
@@ -58,6 +63,7 @@ QTRSensorsAnalog qtra((unsigned char[]) {0, 1, 2, 3, 4, 5},
   NUM_SENSORS, NUM_SAMPLES_PER_SENSOR, QTR_NO_EMITTER_PIN);
 unsigned int sensorValues[NUM_SENSORS];
 
+/* Define distance sensor for wall detection */
 NewPing sonar(TRIG_PIN, ECHO_PIN, MAX_DISTANCE);
 unsigned int uS; // distance raw value read from sonar
 
@@ -66,8 +72,11 @@ unsigned long pingTimer;     // Holds the next ping time.
 
 int lastError = 0;
 
+Servo leftArm;
+Servo rightArm;
+
 void setup() {
-  /* Set up motor controll pins as output */
+  // Set up motor controll pins as output
   pinMode(STBY, OUTPUT);
   pinMode(AIN1,OUTPUT);        
   pinMode(AIN2,OUTPUT);
@@ -75,44 +84,29 @@ void setup() {
   pinMode(BIN1,OUTPUT);        
   pinMode(BIN2,OUTPUT);
   pinMode(PWMB,OUTPUT);
-
+  leftArm.attach(LEFT_SERVO_PIN);  // Set left servo to digital pin 10
+  rightArm.attach(RIGHT_SERVO_PIN);  // Set right servo to digital pin 9
+  
   Serial.begin(9600);
+
+  // Set up front arms to release position
+  leftArm.write(180);
+  rightArm.write(90);
   
   if (!DEBUG) {
     pingTimer = millis(); // Start now.
     for (int i = 0; i < 100; i++) {
       if (INIT_NAV_MODE) {
-        // get a good sample
-//        uS = sonar.ping_median(10);
-//      
-//        // convert to cm
-//        int cm = (int)uS / US_ROUNDTRIP_CM;
-//  
-//        if (cm > 0 && cm <= MAX_STOP_DISTANCE) {
-//          Serial.println("Avoiding walls...");
-//          set_motors(100, -100);
-//        } else {
-//          Serial.println("Route detected, moving out...");
-//          INIT_NAV_MODE = 0; // move out of the starting area
-//          // move forward for 400ms
-//          for (int j = 0; j < 20; j++) {
-//            set_motors(40, 40);
-//            delay(20);
-//          }
-//        }
-//        
-//        Serial.print("Ping: ");
-//        Serial.print(uS);
-//        Serial.println();
-
         if (millis() >= pingTimer) {
           pingTimer += pingSpeed;
           uS = sonar.ping_median(10);
           int cm = (int)uS / US_ROUNDTRIP_CM;
 
-          Serial.print("Ping: ");
-          Serial.print(cm);
-          Serial.println();
+          if (INFO == 1) {
+            Serial.print("Ping: ");
+            Serial.print(cm);
+            Serial.println();
+          }
           
           if (cm > 0 && cm <= MAX_STOP_DISTANCE) {
             Serial.println("Rotating...");
@@ -121,13 +115,6 @@ void setup() {
             INIT_NAV_MODE = 0;
             Serial.println("Route detected, moving out...");
             set_motors(0,0);
-//            pingTimer = millis();
-//            for (int k = 0; k < 100; k++) {
-//              if (millis() >= pingTimer) {
-//                pingTimer += pingSpeed;
-//                set_motors(50, 50);
-//              }
-//            }
           }
         }
       }
@@ -135,27 +122,10 @@ void setup() {
 
     Serial.println("Starting to calibrate in 3 seconds...");
     delay(3000);
-    
-    calibrateLikeCrazyMotherFucker(20, 100);
+
     // Auto-calibration: turn right and left while calibrating the
     // sensors.
-//    for (int counter=0; counter<100; counter++) {
-//      if (counter < 20 || counter >= 60)
-//        set_motors(50,-50);
-//      else
-//        set_motors(-50,50);
-//  
-//      // This function records a set of sensor readings and keeps
-//      // track of the minimum and maximum values encountered.  The
-//      // IR_EMITTERS_ON argument means that the IR LEDs will be
-//      // turned on during the reading, which is usually what you
-//      // want.
-//      qtra.calibrate();
-//  
-//      // the total delay is (# of loops)*(delay time/loop),
-//      // i.e., 100*20 = 2000 ms.
-//      delay(20);
-//    }
+    init_calibrate(20, 100);
     
     set_motors(0,0); // stop the motor for a second
   }
@@ -164,12 +134,13 @@ void setup() {
 void loop() {
   if (DEBUG) {
     // enable the following functions as needed
-//    testSensor();
-//    testMotor();
+//    test_sensor();
+//    test_motor();
+//    test_arms();
   } else {
     if (!SHOOT_MODE) {
       // execute main function
-      lineFollowDrive();
+      line_follow_drive();
       
       // get a good sample, the larger the sample the longer it takes to read
       uS = sonar.ping_median(5);
@@ -178,9 +149,11 @@ void loop() {
       int cm = (int)uS / US_ROUNDTRIP_CM;
     
       if (cm > 0 && cm <= MAX_STOP_DISTANCE) {
-        Serial.print("Ping: ");
-        Serial.print(cm);
-        Serial.println("cm");
+        if (INFO == 1) {
+          Serial.print("Ping: ");
+          Serial.print(cm);
+          Serial.println();
+        }
         SHOOT_MODE = 1; // enter shoot mode and stop the robot movement
       }
     } else {
@@ -190,7 +163,7 @@ void loop() {
   }
 }
 
-void lineFollowDrive() {
+void line_follow_drive() {
   unsigned int position = 0;
   long integral = 0;
   int power_difference = 0;
@@ -279,7 +252,7 @@ void lineFollowDrive() {
 /* Auto-calibration: turn right and left while calibrating the sensors.
  * baseDelayTime: base delay time, delayCounter: the number of loops to delay
  */
-void calibrateLikeCrazyMotherFucker(int baseDelayTime, int delayCounter) {
+void init_calibrate(int baseDelayTime, int delayCounter) {
   for (int counter=0; counter<delayCounter; counter++) {
     if (counter < 20 || counter >= 60)
       set_motors(CALI_SPEED,-CALI_SPEED);
@@ -328,8 +301,20 @@ void set_motors(int leftMotorSpeed, int rightMotorSpeed) {
   }
 }
 
+/* lower the arms to capture the ball, degree values vary based on the inital servo position */
+void grab_ball() {
+  leftArm.write(90);
+  rightArm.write(180);
+}
+
+/* raise the arms to release the ball, degree values vary based on the inital servo position */
+void release_ball() {
+  leftArm.write(180);
+  rightArm.write(90);
+}
+
 /* Read raw sensor values from the QTR Reflectance Sensors */
-void testSensor() {
+void test_sensor() {
   // read raw sensor values
   qtra.read(sensorValues);
   
@@ -346,7 +331,7 @@ void testSensor() {
 }
 
 /* Test motors */
-void testMotor() {
+void test_motor() {
   int testSpeed = 60;
   digitalWrite(STBY, HIGH);
   // Left motor
@@ -358,3 +343,10 @@ void testMotor() {
   digitalWrite(BIN1, HIGH);
   digitalWrite(BIN2, LOW);
 }
+
+void test_arms() {
+  grab_ball();
+  delay(2000);
+//  release_ball();
+}
+

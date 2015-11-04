@@ -37,7 +37,7 @@
 // CLOCK (pin 10) to to Ardunio DigitalPin 7 (yellow wire), clockPin
 // P/S C (pin 9) to Ardunio DigitalPin 8 (green wire), latchPin
 
-#define DEBUG 0 // if DEBUG is on, only test motor and/or sensors
+#define DEBUG 1 // if DEBUG is on, only test motor and/or sensors
 #define INFO 0 // if INFO is on, print debug info
 #define VIS_ENABLED 0
 
@@ -52,7 +52,8 @@
 #define LOWER_ECHO_PIN 3
 //#define LOWER_TRIG_PIN 3
 #define MAX_DISTANCE 80
-#define MAX_STOP_DISTANCE 20
+#define WALL_DISTANCE 20
+#define BALL_DISTANCE 10
 
 /* For Servo Arms, OUTPUT */
 #define LEFT_SERVO_PIN 7
@@ -141,7 +142,8 @@ void setup() {
   if (VIS_ENABLED) {
     establish_contact();
   }
-  
+  init_calibrate(20, 100);
+  set_motors(0,0); // stop the motor for a second
   Serial.begin(9600);
 }
 
@@ -151,12 +153,15 @@ void loop() {
 //    test_sensor();
 //    test_motor();
 //    test_arms();
+//    init_calibrate(20, 100);
+    line_follow_drive();
+    
   } else {
     if (INIT_NAV_MODE) {
       pingTimer = millis(); // Start now.
       if (millis() >= pingTimer) {
         pingTimer += pingSpeed;
-        upperReading = upperSonar.ping_median(10);
+        upperReading = upperSonar.ping_median(5);
         int cm = (int)upperReading / US_ROUNDTRIP_CM;
 
         if (INFO == 1) {
@@ -165,7 +170,7 @@ void loop() {
           Serial.println();
         }
         
-        if (cm > 0 && cm <= MAX_STOP_DISTANCE) {
+        if (cm > 0 && cm <= WALL_DISTANCE) {
           Serial.println("Rotating...");
           set_motors(60, -60);
         } else {
@@ -201,7 +206,7 @@ void loop() {
         // convert to cm
         int upperDistanceCM = (int)upperReading / US_ROUNDTRIP_CM;
   
-        if (upperDistanceCM > 0 && upperDistanceCM <= MAX_STOP_DISTANCE) {
+        if (upperDistanceCM > 0 && upperDistanceCM <= WALL_DISTANCE) {
           if (INFO == 1) {
             Serial.print("Upper Sensor Distance: ");
             Serial.print(upperDistanceCM);
@@ -219,7 +224,7 @@ void loop() {
           lowerReading = lowerSonar.ping_median(5);
           int lowerDistanceCM = (int)lowerReading / US_ROUNDTRIP_CM;
   
-          if (lowerDistanceCM > 0 && lowerDistanceCM <= MAX_STOP_DISTANCE) {
+          if (lowerDistanceCM > 0 && lowerDistanceCM <= BALL_DISTANCE) {
             if (INFO == 1) {
               Serial.print("Lower Sensor Distance: ");
               Serial.print(lowerDistanceCM);
@@ -457,7 +462,7 @@ void test_sensor() {
 
 /* Test motors */
 void test_motor() {
-  int testSpeed = 60;
+  int testSpeed = 100;
   digitalWrite(STBY, HIGH);
   // Left motor
   analogWrite(PWMA, testSpeed);
@@ -472,6 +477,7 @@ void test_motor() {
 void test_arms() {
   grab_ball(90, 180);
   delay(2000);
-//  release_ball(180, 90);
+  release_ball(180, 90);
+  delay(2000);
 }
 /* ----------------------- END OF TEST ROUTINES ----------------------- */

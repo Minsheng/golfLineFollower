@@ -9,9 +9,8 @@
  * - obstacle detection with two ultrasonic sensors
  * - front arms rotation with two servo motors
  * 
- * Last edited by Davidson Minsheng Zheng on November 4th, 2015
- *********************************************************************/
- 
+ * Last edited by Davidson Minsheng Zheng on November 5th, 2015
+ *********************************************************************/ 
 #include <QTRSensors.h>
 #include <NewPing.h>
 #include <Servo.h>
@@ -30,8 +29,8 @@
 // last seen by sensor 5 before being lost.
 
 #define DEBUG 0 // if DEBUG is on, only test motor and/or sensors
-#define INFO 1 // if INFO is on, print debug info
-#define VIS_ENABLED 1
+#define INFO 0 // if INFO is on, print debug info
+#define VIS_ENABLED 0
 
 /* For distance sensor, INPUT */
 #define UPPER_ECHO_PIN 2
@@ -78,8 +77,6 @@
 #define VIS_CALI_MODE 2
 #define VIS_END_MODE 0
 
-int lastError = 0;
-
 /* The core stages for the robot,
  * INIT_NAV_MODE, initial navigation mode for finding the correct direction
  * RELEASE_BALL_MODE, mode for releasing the ping pong ball
@@ -98,14 +95,16 @@ unsigned int sensorValues[NUM_SENSORS];
 /* Define distance sensor for obstacle detection */
 NewPing upperSonar(UPPER_ECHO_PIN, UPPER_ECHO_PIN, MAX_DISTANCE); // for detecting wall
 unsigned int upperReading; // distance raw value read from upper sonar
-unsigned int pingSpeedNav = 100;
+unsigned int pingSpeedNav = 100; // ping speed for initial navigation
 unsigned int pingSpeed = 5; // How frequently are we going to send out a ping (in milliseconds). 50ms would be 20 times a second.
 unsigned long pingTimer;     // Holds the next ping time.
 
 Servo leftArm;
 Servo rightArm;
 
-int inByte = 0;         // incoming serial byte
+int lastError = 0; // for PID error correction
+int dataVal; // for visualization bluetooth communication
+int inByte = 0; // incoming serial byte
 
 void setup() {
   Serial.begin(9600);
@@ -124,10 +123,6 @@ void setup() {
 
   // Set up front arms to captured position
   move_arms(LEFT_ARM_DOWN_POS, RIGHT_ARM_DOWN_POS);
-
-  if (VIS_ENABLED) {
-    establish_contact();
-  }
 
   pingTimer = millis(); // Start now.
 }
@@ -389,22 +384,22 @@ void back_off(int baseDelayTime, int delayCounter) {
   set_motors(0,0);
 }
 
-/* ----------------------- START OF ARM ROTATION ----------------------- */
+/* ----------------------- START OF ARM ROTATION CODE ----------------------- */
 /* lower the arms to capture the ball, degree values vary based on the inital servo position */
 void move_arms(int leftAngle, int rightAngle) {
   leftArm.write(leftAngle);
   rightArm.write(rightAngle);
 }
-/* ----------------------- END OF ARM ROTATION ----------------------- */
+/* ----------------------- END OF ARM ROTATION CODE ----------------------- */
 
-/* ----------------------- START OF VISUALIZATION ----------------------- */
+/* ----------------------- START OF VISUALIZATION CODE ----------------------- */
 /* Establish an initial connection for bluetooth communication */
-void establish_contact() {
-  while (Serial.available() <= 0) {
-    Serial.print('A');   // send a capital A
-    delay(100);
-  }
-}
+//void establish_contact() {
+//  while (Serial.available() <= 0) {
+//    Serial.print('A');   // send a capital A
+//    delay(100);
+//  }
+//}
 
 /* Send motor values to bluetooth */
 void send_data(int leftVal, int rightVal, int robotMode) {
@@ -415,15 +410,23 @@ void send_data(int leftVal, int rightVal, int robotMode) {
     
     // delay 10ms to let the ADC recover:
     delay(10);
-    // send sensor values:
-//    Serial.println("Sending left motor value...");
-    Serial.write(leftVal); delay(10);
-//    Serial.println("Sending right motor value...");
-    Serial.write(rightVal); delay(10);
-    Serial.write(robotMode); delay(10);
+    // send sensor values for visualiztion
+    if (robotMode == 1) {
+      if (abs(leftVal-rightVal) < 15) {
+        dataVal = 11;
+      } else if(leftVal > rightVal + 20) {
+        dataVal = 12;
+      } else if(rightVal > leftVal + 20) {
+        dataVal = 13;
+      } else {
+        dataVal = 4;
+      }
+    }
+    Serial.write(dataVal);
+    delay(10);
   }
 }
-/* ----------------------- END OF VISUALIZATION ----------------------- */
+/* ----------------------- END OF VISUALIZATION CODE ----------------------- */
 
 /* ----------------------- START OF TEST ROUTINES ----------------------- */
 /* Read raw sensor values from the QTR Reflectance Sensors */

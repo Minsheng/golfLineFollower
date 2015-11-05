@@ -9,7 +9,7 @@
  * - obstacle detection with two ultrasonic sensors
  * - front arms rotation with two servo motors
  * 
- * Last edited by Davidson Minsheng Zheng on November 3rd, 2015
+ * Last edited by Davidson Minsheng Zheng on November 4th, 2015
  *********************************************************************/
  
 #include <QTRSensors.h>
@@ -31,14 +31,13 @@
 
 #define DEBUG 0 // if DEBUG is on, only test motor and/or sensors
 #define INFO 1 // if INFO is on, print debug info
-#define VIS_ENABLED 0
+#define VIS_ENABLED 1
 
 /* For distance sensor, INPUT */
 #define UPPER_ECHO_PIN 2
-#define LOWER_ECHO_PIN 3
 #define MAX_DISTANCE 80
-#define WALL_DISTANCE 25
-#define BALL_DISTANCE 5
+#define INIT_WALL_DISTANCE 30
+#define WALL_DISTANCE 20
 
 /* For Servo Arms, OUTPUT */
 #define LEFT_SERVO_PIN 7
@@ -68,6 +67,17 @@
 #define NUM_SENSORS 6 // number of sensors used
 #define NUM_SAMPLES_PER_SENSOR 4 // average 4 analog samples per sensor reading
 
+/* For arms position */
+#define LEFT_ARM_UP_POS 10
+#define LEFT_ARM_DOWN_POS 105
+#define RIGHT_ARM_UP_POS 170
+#define RIGHT_ARM_DOWN_POS 75
+
+/* For bluetooth communication */
+#define VIS_DRIVE_MODE 1
+#define VIS_CALI_MODE 2
+#define VIS_END_MODE 0
+
 int lastError = 0;
 
 /* The core stages for the robot,
@@ -76,10 +86,9 @@ int lastError = 0;
  * DRIVE_MODE, mode for 1) line following before the robot encounters the ball,
  * 2) line following the robot grabs the ball, but before it reaches the goal
  */
-int INIT_NAV_MODE = 0;
-int DRIVE_MODE = 1;
+int INIT_NAV_MODE = 1;
+int DRIVE_MODE = 0;
 int RELEASE_BALL_MODE = 0;
-int BALL_IS_GRABBED = 0;
 
 /* sensors 0 through 5 are connected to analog inputs 0 through 5, respectively */
 QTRSensorsAnalog qtra((unsigned char[]) {0, 1, 2, 3, 4, 5}, 
@@ -88,9 +97,8 @@ unsigned int sensorValues[NUM_SENSORS];
 
 /* Define distance sensor for obstacle detection */
 NewPing upperSonar(UPPER_ECHO_PIN, UPPER_ECHO_PIN, MAX_DISTANCE); // for detecting wall
-NewPing lowerSonar(LOWER_ECHO_PIN, LOWER_ECHO_PIN, MAX_DISTANCE); // for detecting ping pong ball
 unsigned int upperReading; // distance raw value read from upper sonar
-unsigned int lowerReading; // distance raw value read from lower sonar
+unsigned int pingSpeedNav = 100;
 unsigned int pingSpeed = 5; // How frequently are we going to send out a ping (in milliseconds). 50ms would be 20 times a second.
 unsigned long pingTimer;     // Holds the next ping time.
 
@@ -114,16 +122,12 @@ void setup() {
   leftArm.attach(LEFT_SERVO_PIN);  // Set left servo
   rightArm.attach(RIGHT_SERVO_PIN);  // Set right servo
 
-  // Set up front arms to release position
-  leftArm.write(180);
-  rightArm.write(90);
+  // Set up front arms to captured position
+  move_arms(LEFT_ARM_DOWN_POS, RIGHT_ARM_DOWN_POS);
 
   if (VIS_ENABLED) {
     establish_contact();
   }
-
-  init_calibrate(20, 100);
-  set_motors(0,0); // stop the motor for a second
 
   pingTimer = millis(); // Start now.
 }
@@ -133,12 +137,12 @@ void loop() {
     // enable the following functions as needed
 //    test_sensor();
 //    test_motor();
-//    test_arms();
+    test_arms();
 //    test_drive_mode();
   } else {
     if (INIT_NAV_MODE) {
       if (millis() >= pingTimer) {
-        pingTimer += pingSpeed;
+        pingTimer += pingSpeedNav;
         upperReading = upperSonar.ping_median(5);
         int cm = (int)upperReading / US_ROUNDTRIP_CM;
 
@@ -148,9 +152,17 @@ void loop() {
           Serial.println();
         }
         
-        if (cm > 0 && cm <= WALL_DISTANCE) {
+        if (cm > 0 && cm <= INIT_WALL_DISTANCE) {
+          int rotateLeft = 80;
+          int rotateRight = -65;
+          
+          // Notify bluetooth the robot is rotating
+          if (VIS_ENABLED) {
+            send_data(0, 0, VIS_CALI_MODE);
+          }
+          
           Serial.println("Rotating...");
-          set_motors(60, -60);
+          set_motors(rotateLeft, rotateRight);
         } else {
           INIT_NAV_MODE = 0; // stop initial navigation mode
           DRIVE_MODE = 1; // start driving mode
@@ -159,7 +171,12 @@ void loop() {
 
           Serial.println("Starting to calibrate in 3 seconds...");
           delay(3000);
-      
+
+          // Notify bluetooth calibraion has started
+          if (VIS_ENABLED) {
+            send_data(0, 0, VIS_CALI_MODE);
+          }
+          
           // Auto-calibration: turn right and left while calibrating the
           // sensors.
           init_calibrate(20, 100);
@@ -171,12 +188,6 @@ void loop() {
     if (DRIVE_MODE) {
       // execute driving function
       line_follow_drive();
-//      Serial.print("The current time is ");
-//      Serial.println(millis());
-//      Serial.print("Ping timer is ");
-//      Serial.println(pingTimer);
-//      Serial.print("The difference is ");
-//      Serial.println(millis() - pingTimer);
       
       if (millis() >= pingTimer) {
         pingTimer += pingSpeed;
@@ -203,51 +214,26 @@ void loop() {
           
           DRIVE_MODE = 0; // stop driving mode if goal is detected
           RELEASE_BALL_MODE = 1; // enter release mode
-          BALL_IS_GRABBED = 1;
           
           set_motors(0, 0); // stop the robot movement
-        }
 
-        // read from the lower sonar sensor
-        if (!BALL_IS_GRABBED) {
-          lowerReading = lowerSonar.ping_median(5);
-          int lowerDistanceCM = (int)lowerReading / US_ROUNDTRIP_CM;
-
-          if (INFO == 1) {
-            Serial.print("Lower Sensor Distance: ");
-            Serial.print(lowerDistanceCM);
-            Serial.println();
-          }
-          if (lowerDistanceCM > 0 && lowerDistanceCM <= BALL_DISTANCE) {
-            if (INFO == 1) {
-              Serial.print("Lower Sensor Distance: ");
-              Serial.print(lowerDistanceCM);
-              Serial.println();
-            }
-            
-            set_motors(0, 0); // stop the robot movement
-            delay(3000); // delay for 3 seconds
-  
-            BALL_IS_GRABBED = 1;
-            grab_ball(90, 180); // grab the ball
-            
-            delay(3000); // delay for 3 seconds before restarting
+          if (VIS_ENABLED) {
+            send_data(0, 0, VIS_END_MODE);
           }
         }
       }
     }
 
     if (RELEASE_BALL_MODE) {
+      RELEASE_BALL_MODE = 0;
       set_motors(0, 0); // stop the robot
       delay(3000); // delay for 3 seconds
 
-      RELEASE_BALL_MODE = 0;
-      
       Serial.println("Releasing the ball...");
-      release_ball(180, 90);
+      move_arms(LEFT_ARM_UP_POS, RIGHT_ARM_UP_POS);
 
-      delay(2000);
-      back_off(50, 100); // move backwards for five seconds
+      delay(3000);
+      back_off(50, 60); // move backwards for five seconds
     }
   }
 }
@@ -340,7 +326,7 @@ void line_follow_drive() {
 
   // if visualization is enabled, send motor values to bluetooth
   if (VIS_ENABLED) {
-    send_data(leftMotorSpeed, rightMotorSpeed);
+    send_data(leftMotorSpeed, rightMotorSpeed, VIS_DRIVE_MODE);
   }
 }
 
@@ -405,13 +391,7 @@ void back_off(int baseDelayTime, int delayCounter) {
 
 /* ----------------------- START OF ARM ROTATION ----------------------- */
 /* lower the arms to capture the ball, degree values vary based on the inital servo position */
-void grab_ball(int leftAngle, int rightAngle) {
-  leftArm.write(leftAngle);
-  rightArm.write(rightAngle);
-}
-
-/* raise the arms to release the ball, degree values vary based on the inital servo position */
-void release_ball(int leftAngle, int rightAngle) {
+void move_arms(int leftAngle, int rightAngle) {
   leftArm.write(leftAngle);
   rightArm.write(rightAngle);
 }
@@ -427,7 +407,7 @@ void establish_contact() {
 }
 
 /* Send motor values to bluetooth */
-void send_data(int leftVal, int rightVal) {
+void send_data(int leftVal, int rightVal, int robotMode) {
   if (Serial.available() > 0) {
     // get incoming byte:
     inByte = Serial.read();
@@ -440,6 +420,7 @@ void send_data(int leftVal, int rightVal) {
     Serial.write(leftVal); delay(10);
 //    Serial.println("Sending right motor value...");
     Serial.write(rightVal); delay(10);
+    Serial.write(robotMode); delay(10);
   }
 }
 /* ----------------------- END OF VISUALIZATION ----------------------- */
@@ -477,9 +458,9 @@ void test_motor() {
 }
 
 void test_arms() {
-  grab_ball(90, 180);
+  move_arms(10, 170);
   delay(2000);
-  release_ball(180, 90);
+  move_arms(105, 75);
   delay(2000);
 }
 

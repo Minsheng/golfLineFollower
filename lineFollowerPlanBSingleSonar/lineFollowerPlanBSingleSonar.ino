@@ -1,15 +1,18 @@
 /*****************************************************************************
  * OCAD University DF Creation and Computation GOLF project 2015
- * 
+ * Plan B - one ultrasonic sensor, without ball capturing
  * This code is made for Line Following Robot to deliver a ping pong ball from 
- * one point to the other by following predefined tracks,
+ * one point to the other by following predefined course,
  * with the following mechanisms
  * - black line detection with QTR Reflectance Sensor Array
  * - robot movement with two strong DC motors
- * - obstacle detection with two ultrasonic sensors
+ * - obstacle detection with one ultrasonic sensor
  * - front arms rotation with two servo motors
  * 
- * Last edited by Davidson Minsheng Zheng on November 5th, 2015
+ * Change DEBUG to 1 for debugging mode
+ * Change VIS_ENABLED to 1 to enable visualization with Processing code
+ * 
+ * Last edited by Davidson Minsheng Zheng on November 10th, 2015
  *********************************************************************/ 
 #include <QTRSensors.h>
 #include <NewPing.h>
